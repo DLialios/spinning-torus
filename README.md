@@ -1,2 +1,2 @@
-# spinning-torus
-A deobfuscated reimplementation of Andy Sloane's rotating terminal donut.
+# Spinning Torus
+Requires VT100/ANSI terminal emulation.
