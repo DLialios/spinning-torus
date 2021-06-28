@@ -5,6 +5,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <termios.h>
 #include "matrix.h"
 #include "params.h"
 
@@ -18,14 +19,14 @@ typedef struct
 	float lum;
 } point_t;
 
-//lazy way to avoid issues with precision on different platforms
-//this is the number of points to calculate per frame
-static size_t count;
-
 //affects rotation on x
 static float A = 0;
 //affects rotation on z
 static float B = 0;
+
+//translate the object
+static int offsetx = 0;
+static int offsety = 0;
 
 //required to translate all points to a region
 //that is in front of the viewer
@@ -38,22 +39,40 @@ static char lighting = 1;
 //location of light source
 static float light_src[1][3];
 
-//shared across threads
+//contains all point data necessary for one frame
 static struct
 {
-	//array containing all point data necessary for one frame
-	point_t *frame_data;
+	point_t *points;
 
-	//simple producer-consumer approach for sync
 	sem_t full;
 	sem_t empty;
-} shared;
+} image_out;
+
+//contains the last key that was pressed
+static struct
+{
+	char buf;
+
+	sem_t full;
+	sem_t empty;
+} user_in;
+
+
+void *ctrl(void *ptr)
+{
+	while (1)
+	{
+		sem_wait(&user_in.empty);
+		int r = read(STDIN_FILENO, &user_in.buf, 1);
+		sem_post(&user_in.full);
+	}
+}
 
 void *render(void *ptr)
 {
 	while (1)
 	{
-		sem_wait(&shared.empty);
+		sem_wait(&image_out.empty);
 
 		size_t index = 0;
 		for (float theta = 0; theta < 2 * M_PI; theta += THETA_INC)
@@ -71,31 +90,18 @@ void *render(void *ptr)
 
 				point_t temp;
 				temp.z_inv = 1 / pointbuf[2][0][2];
-				temp.xp = (int)(COL / 2 + pointbuf[2][0][0] * ZPRIMEX * temp.z_inv);
-				temp.yp = (int)(ROW / 2 - pointbuf[2][0][1] * ZPRIMEY * temp.z_inv);
-				//accommodate if x projection is out-of-bounds
-				if (temp.xp < 0 || temp.xp > COL - 1)
+				temp.xp = (int)(COL / 2 + pointbuf[2][0][0] * ZPRIMEX * temp.z_inv) + offsetx;
+				temp.yp = (int)(ROW / 2 - pointbuf[2][0][1] * ZPRIMEY * temp.z_inv) + offsety;
+				
+				//accommodate if projection is out-of-bounds
+				char invalid_pos =
+					temp.xp < 0
+					|| temp.xp > COL - 1
+					|| temp.yp < 0
+					|| temp.yp > ROW - 1;
+				if (invalid_pos)
 				{
-					if (temp.xp < 0)
-					{
-						temp.xp = 0;
-					}
-					else
-					{
-						temp.xp = COL - 1;
-					}
-				}
-				//accommodate if y projection is out-of-bounds
-				if (temp.yp < 0 || temp.yp > ROW - 1)
-				{
-					if (temp.yp < 0)
-					{
-						temp.yp = 0;
-					}
-					else
-					{
-						temp.yp = ROW - 1;
-					}
+					temp.xp = temp.yp = temp.z_inv = 0;
 				}
 
 				if (lighting)
@@ -114,12 +120,12 @@ void *render(void *ptr)
 
 				//capture the results for this point (for this frame) in
 				//the synchronized array
-				shared.frame_data[index] = temp;
+				image_out.points[index] = temp;
 				++index;
 			}
 		}
 
-		sem_post(&shared.full);
+		sem_post(&image_out.full);
 	}
 }
 
@@ -128,12 +134,24 @@ int main(int argc, char **argv)
 	//clear the screen
 	printf("\x1b[2J");
 
+	//change terminal to noncanonical mode
+	struct termios t = {0};
+	tcgetattr(STDOUT_FILENO, &t);
+    t.c_lflag &= ~ICANON;
+    t.c_lflag &= ~ECHO;
+    t.c_cc[VMIN] = 1;
+    t.c_cc[VTIME] = 0;
+    tcsetattr(STDOUT_FILENO, TCSANOW, &t);
+
+	//let the object rotate automatically
+	char auto_mode = 1;
+
 	//avoid issues with precision on different platforms
 	size_t count = 0;
 	for (float i = 0; i < 2 * M_PI; i += THETA_INC)
 		for (float j = 0; j < 2 * M_PI; j += PHI_INC)
 			count++;
-	shared.frame_data = (point_t *)malloc(sizeof(point_t) * count);
+	image_out.points = (point_t *)malloc(sizeof(point_t) * count);
 
 	//vector must be normalized
 	light_src[0][0] = 0;
@@ -149,11 +167,14 @@ int main(int argc, char **argv)
 	lighting = argc > 1 && !strcmp(argv[1], "-nl") ? 0 : 1;
 
 	//setup synchronization
-	sem_init(&shared.empty, 0, 1);
-	sem_init(&shared.full, 0, 0);
-	//start render thread
-	pthread_t t1;
-	pthread_create(&t1, NULL, render, NULL);
+	sem_init(&image_out.empty, 0, 1);
+	sem_init(&image_out.full, 0, 0);
+	sem_init(&user_in.empty, 0, 1);
+	sem_init(&user_in.full, 0, 0);
+	//start render and input thread
+	pthread_t t_render, t_input;
+	pthread_create(&t_render, NULL, render, NULL);
+	pthread_create(&t_input, NULL, ctrl, NULL);
 
 	char frame[ROW][COL];
 	float zbuffer[ROW][COL];
@@ -163,17 +184,17 @@ int main(int argc, char **argv)
 		//z-buffer values of 0 correspond to infinite distance
 		memset(zbuffer, 0, sizeof(zbuffer));
 
-		sem_wait(&shared.full);
+		sem_wait(&image_out.full);
 
 		//process the results of the render thread by choosing
 		//which points will actually be shown on the projection
 		//using a z-buffer
 		for (size_t i = 0; i < count; ++i)
 		{
-			int xp = shared.frame_data[i].xp;
-			int yp = shared.frame_data[i].yp;
-			float z_inv = shared.frame_data[i].z_inv;
-			float lum = shared.frame_data[i].lum;
+			int xp = image_out.points[i].xp;
+			int yp = image_out.points[i].yp;
+			float z_inv = image_out.points[i].z_inv;
+			float lum = image_out.points[i].lum;
 
 			if (z_inv > zbuffer[yp][xp])
 			{
@@ -191,11 +212,39 @@ int main(int argc, char **argv)
 			}
 		}
 
-		//increment so the next frame changes angle
-		A += A_INC;
-		B += B_INC;
+		if (auto_mode)
+		{
+			//increment so the next frame changes angle
+			A += A_INC;
+			B += B_INC;
+		}
 
-		sem_post(&shared.empty);
+		//update render params for next frame based on input
+		if (sem_trywait(&user_in.full) == 0)
+		{
+			switch(user_in.buf)
+			{
+				case 32:
+					auto_mode = !auto_mode;
+					break;
+				case 117:
+					offsety -= 1;
+					break;
+				case 106:
+					offsety += 1;
+					break;
+				case 104:
+					offsetx -=1;
+					break;
+				case 107:
+					offsetx += 1;
+					break;
+			}
+
+			sem_post(&user_in.empty);
+		}
+
+		sem_post(&image_out.empty);
 
 		//move cursor to home before printing frame
 		printf("\x1b[H");
@@ -211,11 +260,13 @@ int main(int argc, char **argv)
 		}
 
 		//we can print whatever info we want at this point
+		printf("\x1b[2K");
 		printf("X_ROT:%f\tZ_ROT:%f\n", fmod(A, M_PI), fmod(B, M_PI));
 		fflush(0);
 
 		usleep(SLEEPTIME);
 	}
 
-	pthread_join(t1, NULL);
+	pthread_join(t_render, NULL);
+	pthread_join(t_input, NULL);
 }
