@@ -6,136 +6,55 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <termios.h>
+#include <signal.h>
 #include "matrix.h"
 #include "params.h"
+#include "render.h"
 
-//holds the x and y projection along with
-//z-buffer and luminance data for a single point
-typedef struct
+
+
+void print_frame(char (*frame)[COL])
 {
-	int xp;
-	int yp;
-	float z_inv;
-	float lum;
-} point_t;
+	printf(ANSI_HOME);
 
-//affects rotation on x
-static float A = 0;
-//affects rotation on z
-static float B = 0;
+	for (size_t i = 0; i < ROW; ++i)
+	{
+		for (size_t j = 0; j < COL; ++j)
+		{
+			putchar(frame[i][j]);
+			fflush(0);
+		}
+		putchar('\n');
+	}	
+}
 
-//translate the object
-static int offsetx = 0;
-static int offsety = 0;
-
-//required to translate all points to a region
-//that is in front of the viewer
-static float dist;
-
-//toggle for representing luminosity
-//as defined by the character sequence
-static char lighting = 1;
-
-//location of light source
-static float light_src[1][3];
-
-//contains all point data necessary for one frame
-static struct
+void print_info(float a, float b)
 {
-	point_t *points;
-
-	sem_t full;
-	sem_t empty;
-} image_out;
-
-//contains the last key that was pressed
-static struct
-{
-	char buf;
-
-	sem_t full;
-	sem_t empty;
-} user_in;
+	printf(ANSI_LINE_CLEAR);
+	printf("X_ROT:%f\tZ_ROT:%f\n", fmod(a, M_PI), fmod(b, M_PI));
+	fflush(0);
+}
 
 
 void *ctrl(void *ptr)
 {
+	user_in *input = (user_in*) ptr;
 	while (1)
 	{
-		sem_wait(&user_in.empty);
-		int r = read(STDIN_FILENO, &user_in.buf, 1);
-		sem_post(&user_in.full);
+		sem_wait(&input->empty);
+		int r = read(STDIN_FILENO, &input->buf, 1);
+		sem_post(&input->full);
 	}
 }
 
-void *render(void *ptr)
+struct termios* set_noncanonical()
 {
-	while (1)
-	{
-		sem_wait(&image_out.empty);
+	printf(ANSI_CLEAR);
 
-		size_t index = 0;
-		for (float theta = 0; theta < 2 * M_PI; theta += THETA_INC)
-		{
-			for (float phi = 0; phi < 2 * M_PI; phi += PHI_INC)
-			{
-				//rotate a point of the torus
-				float point[1][3] = {{R2 + R1 * cos(theta), R1 * sin(theta), 0}};
-				float pointbuf[3][1][3];
-				rotate_mat(1, phi, 1, point, pointbuf[0]);
-				rotate_mat(1, A, 0, pointbuf[0], pointbuf[1]);
-				rotate_mat(1, B, 2, pointbuf[1], pointbuf[2]);
-				//ensure the point is in front of the viewer
-				pointbuf[2][0][2] += dist;
+	struct termios *prev_state = malloc(sizeof(struct termios));
+	tcgetattr(STDOUT_FILENO, prev_state);
 
-				point_t temp;
-				temp.z_inv = 1 / pointbuf[2][0][2];
-				temp.xp = (int)(COL / 2 + pointbuf[2][0][0] * ZPRIMEX * temp.z_inv) + offsetx;
-				temp.yp = (int)(ROW / 2 - pointbuf[2][0][1] * ZPRIMEY * temp.z_inv) + offsety;
-				
-				//accommodate if projection is out-of-bounds
-				char invalid_pos =
-					temp.xp < 0
-					|| temp.xp > COL - 1
-					|| temp.yp < 0
-					|| temp.yp > ROW - 1;
-				if (invalid_pos)
-				{
-					temp.xp = temp.yp = temp.z_inv = 0;
-				}
-
-				if (lighting)
-				{
-					//perform the same rotations with unit circle
-					//to find surface normal
-					float norm[1][3] = {{cos(theta), sin(theta), 0}};
-					float normbuf[3][1][3];
-					rotate_mat(1, phi, 1, norm, normbuf[0]);
-					rotate_mat(1, A, 0, normbuf[0], normbuf[1]);
-					rotate_mat(1, B, 2, normbuf[1], normbuf[2]);
-					//dot product of normal vector and light source
-					//1 parallel, -1 anti-parallel, 0 perpendicular
-					temp.lum = dot_mat(3, normbuf[2], light_src);
-				}
-
-				//capture the results for this point (for this frame) in
-				//the synchronized array
-				image_out.points[index] = temp;
-				++index;
-			}
-		}
-
-		sem_post(&image_out.full);
-	}
-}
-
-int main(int argc, char **argv)
-{
-	//clear the screen
-	printf("\x1b[2J");
-
-	//change terminal to noncanonical mode
-	struct termios t = {0};
+	struct termios t;
 	tcgetattr(STDOUT_FILENO, &t);
     t.c_lflag &= ~ICANON;
     t.c_lflag &= ~ECHO;
@@ -143,58 +62,65 @@ int main(int argc, char **argv)
     t.c_cc[VTIME] = 0;
     tcsetattr(STDOUT_FILENO, TCSANOW, &t);
 
-	//let the object rotate automatically
-	char auto_mode = 1;
+	return prev_state;
+}
 
-	//avoid issues with precision on different platforms
+void set_canonical(struct termios *prev)
+{
+	printf(ANSI_CLEAR ANSI_HOME);
+	tcsetattr(STDOUT_FILENO, TCSANOW, prev);
+}
+
+void init_r(render_args *r)
+{
+	r->A = 0;
+	r->B = 0;
+	r->offsetx = 0;
+	r->offsety = 0;
+	r->light_src[0][0] = 0;
+	r->light_src[0][1] = 1 / sqrt(2);
+	r->light_src[0][2] = -1 / sqrt(2);
+
 	size_t count = 0;
 	for (float i = 0; i < 2 * M_PI; i += THETA_INC)
 		for (float j = 0; j < 2 * M_PI; j += PHI_INC)
 			count++;
-	image_out.points = (point_t *)malloc(sizeof(point_t) * count);
+	r->img.n = count;
+	r->img.points = (point_t*) malloc(sizeof(point_t) * count);	
+	
+	sem_init(&r->img.empty, 0, 1);
+	sem_init(&r->img.full, 0, 0);
+}
 
-	//vector must be normalized
-	light_src[0][0] = 0;
-	light_src[0][1] = 1 / sqrt(2);
-	light_src[0][2] = -1 / sqrt(2);
+void init_u(user_in *u)
+{
+	u->buf = 0;
+	sem_init(&u->empty, 0, 1);
+	sem_init(&u->full, 0, 0);
+}
 
-	//final z coordinate for each point
-	//must be >0 so resulting object is
-	//entirely in front of the viewer
-	dist = R1 + R2 + 1;
-
-	//toggle lighting based on args
-	lighting = argc > 1 && !strcmp(argv[1], "-nl") ? 0 : 1;
-
-	//setup synchronization
-	sem_init(&image_out.empty, 0, 1);
-	sem_init(&image_out.full, 0, 0);
-	sem_init(&user_in.empty, 0, 1);
-	sem_init(&user_in.full, 0, 0);
-	//start render and input thread
-	pthread_t t_render, t_input;
-	pthread_create(&t_render, NULL, render, NULL);
-	pthread_create(&t_input, NULL, ctrl, NULL);
-
+void draw_frame_loop(render_args *r, user_in *u)
+{
 	char frame[ROW][COL];
 	float zbuffer[ROW][COL];
+	unsigned char auto_mode = 1, exit_loop = 0;
 	while (1)
 	{
 		memset(frame, ' ', sizeof(frame));
 		//z-buffer values of 0 correspond to infinite distance
 		memset(zbuffer, 0, sizeof(zbuffer));
 
-		sem_wait(&image_out.full);
+		sem_wait(&r->img.full);
 
 		//process the results of the render thread by choosing
 		//which points will actually be shown on the projection
 		//using a z-buffer
-		for (size_t i = 0; i < count; ++i)
+		for (size_t i = 0; i < r->img.n; ++i)
 		{
-			int xp = image_out.points[i].xp;
-			int yp = image_out.points[i].yp;
-			float z_inv = image_out.points[i].z_inv;
-			float lum = image_out.points[i].lum;
+			int xp = r->img.points[i].xp;
+			int yp = r->img.points[i].yp;
+			float z_inv = r->img.points[i].z_inv;
+			float lum = r->img.points[i].lum;
 
 			if (z_inv > zbuffer[yp][xp])
 			{
@@ -203,7 +129,7 @@ int main(int argc, char **argv)
 				//luminance values of less than zero imply that the
 				//angle between the vectors is more than 90 degrees
 				//just leave the character as a period in this case
-				if (lighting && lum > 0)
+				if (lum > 0)
 				{
 					//scale-up the luminance and pick a character
 					size_t mult = sizeof(LIGHTSYM) / sizeof(LIGHTSYM[0]) - 1;
@@ -211,62 +137,96 @@ int main(int argc, char **argv)
 				}
 			}
 		}
-
+	
+		
 		if (auto_mode)
 		{
 			//increment so the next frame changes angle
-			A += A_INC;
-			B += B_INC;
+			r->A += A_INC;
+			r->B += B_INC;
 		}
 
 		//update render params for next frame based on input
-		if (sem_trywait(&user_in.full) == 0)
+		if (sem_trywait(&u->full) == 0)
 		{
-			switch(user_in.buf)
+			switch(u->buf)
 			{
+				case 27:
+					exit_loop = 1;
+					break;
 				case 32:
 					auto_mode = !auto_mode;
 					break;
-				case 117:
-					offsety -= 1;
+				case 'u':
+					r->offsety -= 1;
 					break;
-				case 106:
-					offsety += 1;
+				case 'j':
+					r->offsety += 1;
 					break;
-				case 104:
-					offsetx -=1;
+				case 'h':
+					r->offsetx -=1;
 					break;
-				case 107:
-					offsetx += 1;
+				case 'k':
+					r->offsetx += 1;
 					break;
 			}
 
-			sem_post(&user_in.empty);
+			if (exit_loop)
+				break;	
+
+			sem_post(&u->empty);
 		}
 
-		sem_post(&image_out.empty);
+		sem_post(&r->img.empty);
 
-		//move cursor to home before printing frame
-		printf("\x1b[H");
-
-		for (size_t i = 0; i < ROW; ++i)
-		{
-			for (size_t j = 0; j < COL; ++j)
-			{
-				putchar(frame[i][j]);
-				fflush(0);
-			}
-			putchar('\n');
-		}
-
-		//we can print whatever info we want at this point
-		printf("\x1b[2K");
-		printf("X_ROT:%f\tZ_ROT:%f\n", fmod(A, M_PI), fmod(B, M_PI));
-		fflush(0);
+		print_frame(frame);
+		print_info(r->A, r->B);
 
 		usleep(SLEEPTIME);
 	}
-
-	pthread_join(t_render, NULL);
-	pthread_join(t_input, NULL);
 }
+
+void signal_handler(int sig)
+{
+	switch (sig)
+	{
+		case SIGINT:
+		break;
+	}
+}
+
+int main(int argc, char **argv)
+{
+
+	sigset_t mask;
+	sigfillset(&mask);
+	pthread_sigmask(SIG_BLOCK, &mask, NULL);
+
+
+	// struct sigaction sa;
+	// sigset_t mask;
+	// sigemptyset(&mask);
+	// sa.sa_handler = &signal_handler;
+	// sa.sa_mask = mask;
+
+
+
+	render_args r;
+	user_in u;
+	pthread_t t_render, t_input;
+	struct termios *prev_terminal_state;
+
+	init_r(&r);
+	init_u(&u);
+
+	pthread_create(&t_render, NULL, render, (void*) &r);
+	pthread_create(&t_input, NULL, ctrl, (void*) &u);
+
+	prev_terminal_state = set_noncanonical();
+	draw_frame_loop(&r, &u);
+	
+	set_canonical(prev_terminal_state);
+	free(r.img.points);
+	free(prev_terminal_state);
+}
+

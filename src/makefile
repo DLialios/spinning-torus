@@ -1,12 +1,12 @@
 IDIR=../include
-CC=gcc
+CC=nvcc
 CFLAGS=-I$(IDIR) -O3
 ODIR=obj
 LDIR=../lib
 LIBS=-lm -lpthread
-_DEPS=matrix.h params.h
+_DEPS=matrix.h params.h render.h
 DEPS=$(patsubst %,$(IDIR)/%,$(_DEPS))
-_OBJ=main.o matrix.o
+_OBJ=main.o matrix.o render.o
 OBJ=$(patsubst %,$(ODIR)/%,$(_OBJ))
 EXENAME=proj1
 
