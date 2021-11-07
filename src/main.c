@@ -42,7 +42,7 @@ void *ctrl(void *ptr)
 	while (1)
 	{
 		sem_wait(&input->empty);
-		int r = read(STDIN_FILENO, &input->buf, 1);
+		read(STDIN_FILENO, &input->buf, 1);
 		sem_post(&input->full);
 	}
 }
@@ -186,30 +186,12 @@ void draw_frame_loop(render_args *r, user_in *u)
 	}
 }
 
-void signal_handler(int sig)
-{
-	switch (sig)
-	{
-		case SIGINT:
-		break;
-	}
-}
-
 int main(int argc, char **argv)
 {
 
 	sigset_t mask;
 	sigfillset(&mask);
 	pthread_sigmask(SIG_BLOCK, &mask, NULL);
-
-
-	// struct sigaction sa;
-	// sigset_t mask;
-	// sigemptyset(&mask);
-	// sa.sa_handler = &signal_handler;
-	// sa.sa_mask = mask;
-
-
 
 	render_args r;
 	user_in u;

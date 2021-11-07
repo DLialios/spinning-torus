@@ -1,20 +1,24 @@
-IDIR=../include
-CC=nvcc
-CFLAGS=-I$(IDIR) -O3
-ODIR=obj
-LDIR=../lib
-LIBS=-lm -lpthread
-_DEPS=matrix.h params.h render.h
-DEPS=$(patsubst %,$(IDIR)/%,$(_DEPS))
-_OBJ=main.o matrix.o render.o
-OBJ=$(patsubst %,$(ODIR)/%,$(_OBJ))
 EXENAME=proj1
 
-$(ODIR)/%.o: %.c $(DEPS)
-	$(CC) -c -o $@ $< $(CFLAGS)
+LIBS=
+
+IDIR=../include
+ODIR=obj
+
+_DEPS=matrix.h params.h render.h
+DEPS=$(patsubst %,$(IDIR)/%,$(_DEPS))
+
+_OBJ=main.o matrix.o render.o
+OBJ=$(patsubst %,$(ODIR)/%,$(_OBJ))
 
 $(EXENAME): $(OBJ)
-	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
+	nvcc -o $@ $^ $(LIBS)
+
+$(ODIR)/%.o: %.c $(DEPS)
+	gcc -Wall -g -c -o $@ $< -I$(IDIR)
+
+$(ODIR)/%.o: %.cu $(DEPS)
+	nvcc -arch compute_61 -code sm_61 -g -G -c -o $@ $< -I$(IDIR)
 
 .PHONY: clean
 clean:
