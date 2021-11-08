@@ -12,10 +12,14 @@ void *render(void *ptr)
 		sem_wait(&input->img.empty);
 
 		size_t index = 0;
-		for (float theta = 0; theta < 2 * M_PI; theta += THETA_INC)
+		for (size_t i = 0; i < input->img.outer; ++i)
 		{
-			for (float phi = 0; phi < 2 * M_PI; phi += PHI_INC)
+			float theta = (float) i * THETA_INC;
+
+			for (size_t j = 0; j < input->img.inner; ++j)
 			{
+				float phi = (float) j * PHI_INC;
+
 				//rotate a point of the torus
 				float point[1][3] = {{R2 + R1 * cos(theta), R1 * sin(theta), 0}};
 				float pointbuf[3][1][3];

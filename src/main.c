@@ -81,12 +81,14 @@ void init_r(render_args *r)
 	r->light_src[0][1] = 1 / sqrt(2);
 	r->light_src[0][2] = -1 / sqrt(2);
 
-	size_t count = 0;
+	size_t outer = 0, inner = 0;
 	for (float i = 0; i < 2 * M_PI; i += THETA_INC)
-		for (float j = 0; j < 2 * M_PI; j += PHI_INC)
-			count++;
-	r->img.n = count;
-	r->img.points = (point_t*) malloc(sizeof(point_t) * count);	
+		++outer;
+	for (float j = 0; j < 2 * M_PI; j += PHI_INC)
+		++inner;
+	r->img.outer = outer;
+	r->img.inner = inner;
+	r->img.points = (point_t*) malloc(sizeof(point_t) * outer * inner);	
 	
 	sem_init(&r->img.empty, 0, 1);
 	sem_init(&r->img.full, 0, 0);
@@ -115,7 +117,7 @@ void draw_frame_loop(render_args *r, user_in *u)
 		//process the results of the render thread by choosing
 		//which points will actually be shown on the projection
 		//using a z-buffer
-		for (size_t i = 0; i < r->img.n; ++i)
+		for (size_t i = 0; i < r->img.outer * r->img.inner; ++i)
 		{
 			int xp = r->img.points[i].xp;
 			int yp = r->img.points[i].yp;
@@ -157,16 +159,16 @@ void draw_frame_loop(render_args *r, user_in *u)
 				case 32:
 					auto_mode = !auto_mode;
 					break;
-				case 'u':
+				case 'w':
 					r->offsety -= 1;
 					break;
-				case 'j':
+				case 's':
 					r->offsety += 1;
 					break;
-				case 'h':
+				case 'a':
 					r->offsetx -=1;
 					break;
-				case 'k':
+				case 'd':
 					r->offsetx += 1;
 					break;
 			}

@@ -57,7 +57,8 @@ typedef struct
 typedef struct
 {
     point_t *points;
-    size_t n;
+    size_t outer;
+    size_t inner;
 
     sem_t full;
     sem_t empty;
