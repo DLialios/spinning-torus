@@ -1,1 +1,0 @@
-extern void *render(void *ptr);

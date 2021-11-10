@@ -5,7 +5,7 @@ LIBS=
 IDIR=../include
 ODIR=obj
 
-_DEPS=matrix.h params.h render.h
+_DEPS=matrix.h params.h 
 DEPS=$(patsubst %,$(IDIR)/%,$(_DEPS))
 
 _OBJ=main.o matrix.o render.o

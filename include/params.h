@@ -4,6 +4,10 @@
 #define ANSI_CLEAR "\x1b[2J"
 #define ANSI_LINE_CLEAR "\x1b[2K"
 #define ANSI_HOME "\x1b[H"
+#define ANSI_RESET_MODE "\x1b[0m"
+#define ANSI_SET_BOLD "\x1b[1m"
+#define ANSI_HIDE_CURSOR "\x1b[?25l"
+#define ANSI_SHOW_CURSOR "\x1b[?25h"
 
 //output size
 #define ROW 24
@@ -88,4 +92,9 @@ typedef struct
 	float light_src[1][3];
 
     image_out img;
+
+    unsigned char software_renderer;
+    
+    float last_frame_time;
+
 } render_args;

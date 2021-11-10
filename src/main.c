@@ -9,9 +9,9 @@
 #include <signal.h>
 #include "matrix.h"
 #include "params.h"
-#include "render.h"
 
-
+extern void cuda_render_frame(render_args *input);
+extern void cuda_device_reset();
 
 void print_frame(char (*frame)[COL])
 {
@@ -32,6 +32,7 @@ void print_info(float a, float b)
 {
 	printf(ANSI_LINE_CLEAR);
 	printf("X_ROT:%f\tZ_ROT:%f\n", fmod(a, M_PI), fmod(b, M_PI));
+
 	fflush(0);
 }
 
@@ -89,6 +90,8 @@ void init_r(render_args *r)
 	r->img.outer = outer;
 	r->img.inner = inner;
 	r->img.points = (point_t*) malloc(sizeof(point_t) * outer * inner);	
+
+	r->software_renderer = 1;
 	
 	sem_init(&r->img.empty, 0, 1);
 	sem_init(&r->img.full, 0, 0);
@@ -171,6 +174,9 @@ void draw_frame_loop(render_args *r, user_in *u)
 				case 'd':
 					r->offsetx += 1;
 					break;
+				case 'g':
+					r->software_renderer = 1 - r->software_renderer;
+					break;
 			}
 
 			if (exit_loop)
@@ -182,14 +188,125 @@ void draw_frame_loop(render_args *r, user_in *u)
 		sem_post(&r->img.empty);
 
 		print_frame(frame);
-		print_info(r->A, r->B);
+
+	
+		printf(ANSI_SET_BOLD);
+		printf(ANSI_LINE_CLEAR);
+		printf("X_ROT:%f\tZ_ROT:%f\n", fmod(r->A, M_PI), fmod(r->B, M_PI));
+		printf(ANSI_LINE_CLEAR);
+		printf("RENDERER: %s\n", r->software_renderer ? "SOFTWARE" : "CUDA");
+		printf(ANSI_LINE_CLEAR);
+		printf("FRAMETIME: %6.3f ms\n", r->last_frame_time);
+		printf(ANSI_RESET_MODE);
+		fflush(0);		
 
 		usleep(SLEEPTIME);
 	}
 }
 
+
+void render_frame(render_args *input)
+{
+
+	struct timespec start, end;
+	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
+
+    size_t index = 0;
+    for (size_t i = 0; i < input->img.outer; ++i)
+    {
+        float theta = (float) i * THETA_INC;
+
+        for (size_t j = 0; j < input->img.inner; ++j)
+        {
+            float phi = (float) j * PHI_INC;
+
+            //rotate a point of the torus
+            float point[1][3] = {{R2 + R1 * cos(theta), R1 * sin(theta), 0}};
+            float pointbuf[3][1][3];
+            rotate_mat(1, phi, 1, point, pointbuf[0]);
+            rotate_mat(1, input->A, 0, pointbuf[0], pointbuf[1]);
+            rotate_mat(1, input->B, 2, pointbuf[1], pointbuf[2]);
+            //ensure the point is in front of the viewer
+            pointbuf[2][0][2] += DIST;
+
+            point_t temp;
+            temp.z_inv = 1 / pointbuf[2][0][2];
+            temp.xp = (int)(COL / 2 + pointbuf[2][0][0] * ZPRIMEX * temp.z_inv) + input->offsetx;
+            temp.yp = (int)(ROW / 2 - pointbuf[2][0][1] * ZPRIMEY * temp.z_inv) + input->offsety;
+            
+            //accommodate if projection is out-of-bounds
+            char invalid_pos =
+                temp.xp < 0
+                || temp.xp > COL - 1
+                || temp.yp < 0
+                || temp.yp > ROW - 1;
+            if (invalid_pos)
+            {
+                temp.xp = temp.yp = temp.z_inv = 0;
+            }
+
+            //perform the same rotations with unit circle
+            //to find surface normal
+            float norm[1][3] = {{cos(theta), sin(theta), 0}};
+            float normbuf[3][1][3];
+            rotate_mat(1, phi, 1, norm, normbuf[0]);
+            rotate_mat(1, input->A, 0, normbuf[0], normbuf[1]);
+            rotate_mat(1, input->B, 2, normbuf[1], normbuf[2]);
+            //dot product of normal vector and light source
+            //1 parallel, -1 anti-parallel, 0 perpendicular
+            temp.lum = dot_mat(3, normbuf[2], input->light_src);
+
+            //capture the results for this point (for this frame) in
+            //the synchronized array
+            input->img.points[index] = temp;
+            ++index;
+        }
+    }  	
+
+	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
+
+	float diff_s = end.tv_sec - start.tv_sec;
+	float diff_ns;
+
+	if (diff_s > 0)
+		diff_ns = (1e9 - start.tv_nsec) + ((diff_s - 1) * 1e9) + (end.tv_nsec);
+	else
+		diff_ns = end.tv_nsec - start.tv_nsec;
+
+	input->last_frame_time = diff_ns / 1e6;
+}
+
+
+void *render(void *ptr)
+{
+	static unsigned char prev_renderer = 1;
+
+	render_args *input = (render_args*) ptr;
+
+	while (1)
+	{
+		sem_wait(&input->img.empty);
+
+		if(input->software_renderer && !prev_renderer)
+			cuda_device_reset();
+		
+		if (input->software_renderer)
+			render_frame(input);
+		else
+			cuda_render_frame(input);
+
+		prev_renderer = input->software_renderer;
+
+		sem_post(&input->img.full);
+	}
+}
+
+
+ 
 int main(int argc, char **argv)
 {
+
+	printf(ANSI_HIDE_CURSOR);
 
 	sigset_t mask;
 	sigfillset(&mask);
@@ -210,6 +327,7 @@ int main(int argc, char **argv)
 	draw_frame_loop(&r, &u);
 	
 	set_canonical(prev_terminal_state);
+	printf(ANSI_SHOW_CURSOR);
 	free(r.img.points);
 	free(prev_terminal_state);
 }
