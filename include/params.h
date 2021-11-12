@@ -1,13 +1,19 @@
+#ifndef PARAMS_H
+#define PARAMS_H
+
 #include <semaphore.h>
 
-//VT100 escape sequences
-#define ANSI_CLEAR "\x1b[2J"
-#define ANSI_LINE_CLEAR "\x1b[2K"
-#define ANSI_HOME "\x1b[H"
-#define ANSI_RESET_MODE "\x1b[0m"
-#define ANSI_SET_BOLD "\x1b[1m"
-#define ANSI_HIDE_CURSOR "\x1b[?25l"
-#define ANSI_SHOW_CURSOR "\x1b[?25h"
+#define ASCII_ESCAPE    27
+#define ASCII_SPACE     32
+
+//escape sequences
+#define ANSI_CLEAR          "\x1b[2J"
+#define ANSI_LINE_CLEAR     "\x1b[2K"
+#define ANSI_HOME           "\x1b[H"
+#define ANSI_SET_BOLD       "\x1b[1m"
+#define ANSI_RESET_SGR      "\x1b[0m"
+#define ANSI_HIDE_CURSOR    "\x1b[?25l"
+#define ANSI_SHOW_CURSOR    "\x1b[?25h"
 
 //output size
 #define ROW 24
@@ -25,8 +31,7 @@
 
 //there's an optimization problem for computing these vals
 //such that the resultant projection does not produce an
-//out-of-bounds array index...
-//...or just snap the points to the edges when needed
+//out-of-bounds array index
 #define ZPRIMEX 26
 #define ZPRIMEY 10
 
@@ -45,7 +50,6 @@
 //symbols for luminance values
 #define LIGHTSYM ",:;-~=*#&$@"
 
-
 //holds the x and y projection along with
 //z-buffer and luminance data for a single point
 typedef struct
@@ -56,18 +60,6 @@ typedef struct
     float lum;
 } point_t;
 
-
-//contains all point data necessary for one frame
-typedef struct
-{
-    point_t *points;
-    size_t outer;
-    size_t inner;
-
-    sem_t full;
-    sem_t empty;
-} image_out;
-
 //contains the last key that was pressed
 typedef struct
 {
@@ -77,24 +69,34 @@ typedef struct
     sem_t empty;
 } user_in;
 
+enum renderer {software = 1, cuda = 0};
+
 typedef struct
 {
-    //affects rotation on x
+    enum renderer rKind;
+
+    float frame_time;
+
+    //x-axis rotation
 	float A;
-	//affects rotation on z
+	//z-axis rotation
 	float B;
 
-	//translate the object
+	//object translation
 	int offsetx;
 	int offsety;
 
 	//location of light source
 	float light_src[1][3];
 
-    image_out img;
+    //avoid floating-point loop conditions
+    size_t outer;
+    size_t inner;
 
-    unsigned char software_renderer;
-    
-    float last_frame_time;
+    point_t *points;
 
+    sem_t full;
+    sem_t empty;
 } render_args;
+
+#endif
