@@ -93,9 +93,9 @@ __global__ void render_frame(float A,
     
     if (row < outer && col < inner)
     {
-        size_t gindex   = row * inner + col;
-        float theta     = (float) row * THETA_INC;
-        float phi       = (float) col * PHI_INC;
+        size_t  gindex  = row * inner + col;
+        float   theta   = (float) row * THETA_INC;
+        float   phi     = (float) col * PHI_INC;
 
         //rotate a point of the torus
         float point[3] = {R2 + R1 * cos(theta), R1 * sin(theta), 0};

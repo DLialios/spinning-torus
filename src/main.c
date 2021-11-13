@@ -13,17 +13,17 @@
 
 #define INIT_RKIND software
 
-void render_frame(render_args *input)
+void render_frame(render_args *r_args)
 {
 	struct timespec start, end;
 	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
 
     size_t index = 0;
-    for (size_t i = 0; i < input->outer; ++i)
+    for (size_t i = 0; i < r_args->outer; ++i)
     {
         float theta = (float) i * THETA_INC;
 
-        for (size_t j = 0; j < input->inner; ++j)
+        for (size_t j = 0; j < r_args->inner; ++j)
         {
             float phi = (float) j * PHI_INC;
 
@@ -31,47 +31,45 @@ void render_frame(render_args *input)
             float point[1][3] = {{R2 + R1 * cos(theta), R1 * sin(theta), 0}};
             float pointbuf[3][1][3];
             rotate_mat(1, phi, aY, point, pointbuf[0]);
-            rotate_mat(1, input->A, aX, pointbuf[0], pointbuf[1]);
-            rotate_mat(1, input->B, aZ, pointbuf[1], pointbuf[2]);
+            rotate_mat(1, r_args->A, aX, pointbuf[0], pointbuf[1]);
+            rotate_mat(1, r_args->B, aZ, pointbuf[1], pointbuf[2]);
             //ensure the point is in front of the viewer
             pointbuf[2][0][2] += DIST;
 
             point_t temp;
             temp.z_inv = 1 / pointbuf[2][0][2];
-            temp.xp = (int)(COL / 2 + pointbuf[2][0][0] * ZPRIMEX * temp.z_inv) + input->offsetx;
-            temp.yp = (int)(ROW / 2 - pointbuf[2][0][1] * ZPRIMEY * temp.z_inv) + input->offsety;
+            temp.xp = (int)(COL / 2 + pointbuf[2][0][0] * ZPRIMEX * temp.z_inv) + r_args->offsetx;
+            temp.yp = (int)(ROW / 2 - pointbuf[2][0][1] * ZPRIMEY * temp.z_inv) + r_args->offsety;
             
-            //accommodate if projection is out-of-bounds
-            char invalid_pos =
-                temp.xp < 0
-                || temp.xp > COL - 1
-                || temp.yp < 0
-                || temp.yp > ROW - 1;
+            //handle case when projection is out-of-bounds
+			unsigned char invalid_pos = temp.xp < 0
+											|| temp.xp > COL - 1
+											|| temp.yp < 0
+											|| temp.yp > ROW - 1;
             if (invalid_pos)
             {
                 temp.xp = temp.yp = temp.z_inv = 0;
             }
 
-            //perform the same rotations with unit circle
-            //to find surface normal
+			//perform the same rotations with unit circle
+			//to find surface normal
             float norm[1][3] = {{cos(theta), sin(theta), 0}};
             float normbuf[3][1][3];
             rotate_mat(1, phi, aY, norm, normbuf[0]);
-            rotate_mat(1, input->A, aX, normbuf[0], normbuf[1]);
-            rotate_mat(1, input->B, aZ, normbuf[1], normbuf[2]);
-            //dot product of normal vector and light source
-            //1 parallel, -1 anti-parallel, 0 perpendicular
-            temp.lum = dot_mat(3, normbuf[2], input->light_src);
+            rotate_mat(1, r_args->A, aX, normbuf[0], normbuf[1]);
+            rotate_mat(1, r_args->B, aZ, normbuf[1], normbuf[2]);
+			//dot product of surface normal and light source
+			//1 parallel, -1 anti-parallel, 0 perpendicular
+            temp.lum = dot_mat(3, normbuf[2], r_args->light_src);
 
-            //capture the results for this point (for this frame) in
-            //the synchronized array
-            input->points[index] = temp;
-            ++index;
+			//capture the results for this point (for this frame)
+            r_args->points[index++] = temp;
         }
     }  	
 
 	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
 
+	//find cpu time
 	float diff_s = end.tv_sec - start.tv_sec;
 	float diff_ns;
 
@@ -80,30 +78,8 @@ void render_frame(render_args *input)
 	else
 		diff_ns = end.tv_nsec - start.tv_nsec;
 
-	input->frame_time = diff_ns / 1e6;
+	r_args->frame_time = diff_ns / 1e6;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 void init_r(render_args *r)
 {
@@ -194,33 +170,30 @@ struct termios* set_noncanonical()
 void draw_frame_loop(render_args *r, user_in *u)
 {
 	char 			frame[ROW][COL];
-	float			zbuffer[ROW][COL];
+	float			zbuf[ROW][COL];
 	unsigned char	auto_mode = 1, 
 				  	exit_loop = 0;
 
 	while (1)
 	{
 		memset(frame, ' ', sizeof(frame));
-		memset(zbuffer, 0, sizeof(zbuffer)); //z-buffer = 0 -> infinite distance
+		memset(zbuf, 0, sizeof(zbuf)); //z-buffer = 0 -> infinite distance
 
 		sem_wait(&r->full);
 
 		//choose which points to project
 		for (size_t i = 0; i < r->outer * r->inner; ++i)
 		{
-			int xp 		= r->points[i].xp;
-			int yp 		= r->points[i].yp;
-			float z_inv	= r->points[i].z_inv;
-			float lum 	= r->points[i].lum;
+			int 	xp 		= r->points[i].xp;
+			int		yp 		= r->points[i].yp;
+			float	z_inv	= r->points[i].z_inv;
+			float	lum 	= r->points[i].lum;
 
-			if (z_inv > zbuffer[yp][xp])
+			if (z_inv > zbuf[yp][xp])
 			{
-				zbuffer[yp][xp]	= z_inv;
+				zbuf[yp][xp]	= z_inv;
 				frame[yp][xp]	= '.';
 
-				//luminance values of less than zero imply that the
-				//angle between the vectors is more than 90 degrees
-				//just leave the character as a period in this case
 				if (lum > 0)
 				{
 					size_t mult		= sizeof(LIGHTSYM) / sizeof(LIGHTSYM[0]) - 1;
@@ -228,19 +201,18 @@ void draw_frame_loop(render_args *r, user_in *u)
 				}
 			}
 		}
-	
-		
+
 		if (auto_mode)
 		{
-			//increment so the next frame changes angle
+			//change angle for next frame
 			r->A += A_INC;
 			r->B += B_INC;
 		}
 
-		//update render params for next frame based on input
+		//use keyboard input
 		if (sem_trywait(&u->full) == 0)
 		{
-			switch(u->buf)
+			switch (u->buf)
 			{
 				case ASCII_ESCAPE:
 					exit_loop = 1;
@@ -273,7 +245,7 @@ void draw_frame_loop(render_args *r, user_in *u)
 
 		sem_post(&r->empty);
 
-		//print frame		
+		//print frame with info	
 		printf(ANSI_HOME);
 		for (size_t i = 0; i < ROW; ++i)
 		{
@@ -281,33 +253,16 @@ void draw_frame_loop(render_args *r, user_in *u)
 				putchar(frame[i][j]);
 			putchar('\n');
 		}		
-
-		//print info
 		printf(ANSI_SET_BOLD);
-		printf(ANSI_LINE_CLEAR "X_ROT:%f\tZ_ROT:%f\n", fmod(r->A, M_PI), fmod(r->B, M_PI));
-		printf(ANSI_LINE_CLEAR "RENDERER: %s\n", r->rKind == 1 ? "SOFTWARE" : "CUDA");
-		printf(ANSI_LINE_CLEAR "FRAMETIME: %6.3f ms\n", r->frame_time);
+		printf(ANSI_LINE_CLEAR "X_ROT\t:%.2frad\n", fmod(r->A, M_PI));
+		printf(ANSI_LINE_CLEAR "Z_ROT\t:%.2frad\n", fmod(r->B, M_PI));
+		printf(ANSI_LINE_CLEAR "%s\t:%.3fms\n", r->rKind == software ? "SW" : "CU", r->frame_time);
 		printf(ANSI_RESET_SGR);	
 
 		usleep(SLEEPTIME);
 	}
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- 
 int main(int argc, char **argv)
 {
 	sigset_t		mask;
@@ -333,7 +288,7 @@ int main(int argc, char **argv)
 	printf(ANSI_CLEAR ANSI_HOME ANSI_SHOW_CURSOR);
 	tcsetattr(STDOUT_FILENO, TCSAFLUSH, prev_terminal_state);
 
-	free(r.points);
 	free(prev_terminal_state);
+	free(r.points);
 }
 
