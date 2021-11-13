@@ -1,2 +1,3 @@
 *.o
-src/proj1
+src/spin
+src/spin_opt
