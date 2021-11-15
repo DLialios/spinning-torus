@@ -6,7 +6,7 @@ __device__ void d_mult_mat(size_t m1,
                            size_t n1,
                            size_t m2, 
                            size_t n2,
-			               const float *a, 
+                           const float *a, 
                            const float *b, 
                            float *buf)
 {
@@ -26,8 +26,8 @@ __device__ void d_rotate_mat(size_t m1,
                              const float *a, 
                              float *buf)
 {
-	switch (axis)
-	{
+    switch (axis)
+    {
         case aX:
         {
             float R_x[9] = 
@@ -61,7 +61,7 @@ __device__ void d_rotate_mat(size_t m1,
             d_mult_mat(m1, 3, 3, 3, a, R_z, buf);
             break;
         }
-	}    
+    }    
 }                             
 
 __device__ void d_trans_mat(size_t m,

@@ -78,16 +78,16 @@ typedef struct
     float frame_time;
 
     //x-axis rotation
-	float A;
-	//z-axis rotation
-	float B;
+    float A;
+    //z-axis rotation
+    float B;
 
-	//object translation
-	int offsetx;
-	int offsety;
+    //object translation
+    int offsetx;
+    int offsety;
 
-	//location of light source
-	float light_src[1][3];
+    //location of light source
+    float light_src[1][3];
 
     //avoid floating-point loop conditions
     size_t outer;
