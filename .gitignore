@@ -1,3 +1,5 @@
 *.o
 src/spin
-src/spin_opt
+src/spindebug
+src/.cache/
+src/compile_commands.json

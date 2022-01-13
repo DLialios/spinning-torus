@@ -54,49 +54,49 @@
 //z-buffer and luminance data for a single point
 typedef struct
 {
-        int   xp;
-        int   yp;
-        float z_inv;
-        float lum;
+    int   xp;
+    int   yp;
+    float z_inv;
+    float lum;
 } point_t;
 
 //contains the last key that was pressed
 typedef struct
 {
-        int buf;
+    int buf;
 
-        sem_t full;
-        sem_t empty;
+    sem_t full;
+    sem_t empty;
 } user_in;
 
 enum renderer {software = 1, cuda = 0};
 
 typedef struct
 {
-        enum renderer rKind;
+    enum renderer rKind;
 
-        float frame_time;
+    float frame_time;
 
-        //x-axis rotation
-        float A;
-        //z-axis rotation
-        float B;
+    //x-axis rotation
+    float A;
+    //z-axis rotation
+    float B;
 
-        //object translation
-        int offsetx;
-        int offsety;
+    //object translation
+    int offsetx;
+    int offsety;
 
-        //location of light source
-        float light_src[1][3];
+    //location of light source
+    float light_src[1][3];
 
-        //avoid floating-point loop conditions
-        size_t outer;
-        size_t inner;
+    //avoid floating-point loop conditions
+    size_t outer;
+    size_t inner;
 
-        point_t *points;
+    point_t *points;
 
-        sem_t full;
-        sem_t empty;
+    sem_t full;
+    sem_t empty;
 } render_args;
 
 #endif
