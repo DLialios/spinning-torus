@@ -2,10 +2,10 @@ EXE=spin
 LIB=m pthread
 IDIR=../include
 ODIR=obj
-SRC=main.c matrix.c
-DEP=params.h matrix.h
+SRC=main.c render.c matrix.c
+DEP=params.h render.h matrix.h
 CU_SRC=render.cu
-CU_DEP=render.h
+CU_DEP=rendercu.h
 
 $(EXE): $(patsubst %,$(ODIR)/%.opt.o,$(basename $(SRC)))
 	gcc -s -static $^ $(patsubst %,-l%,$(LIB)) -o $@ 

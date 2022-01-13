@@ -3,6 +3,8 @@
 
 #include <semaphore.h>
 
+#define INIT_RKIND software
+
 #define ASCII_ESCAPE 27
 #define ASCII_SPACE  32
 

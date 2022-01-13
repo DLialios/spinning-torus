@@ -1,4 +1,5 @@
 #include "params.h"
+#include "rendercu.h"
 
 enum rotationAxis {aX = 0, aY = 1, aZ = 2};
 
