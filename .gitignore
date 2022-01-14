@@ -1,5 +1,6 @@
 *.o
 src/spin
 src/spindebug
+src/spincuda
 src/.cache/
 src/compile_commands.json
